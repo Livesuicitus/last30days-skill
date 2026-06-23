@@ -178,6 +178,10 @@ def render_compact(report: schema.Report, cluster_limit: int = 8, fun_level: str
     if best_takes:
         lines.extend([""] + best_takes)
 
+    top_comments = _render_top_comments(report)
+    if top_comments:
+        lines.extend([""] + top_comments)
+
     lines.extend(_render_source_coverage(report))
     # Close EVIDENCE FOR SYNTHESIS envelope before anything that passes through verbatim.
     lines.append("")
@@ -1191,6 +1195,12 @@ def _render_candidate(candidate: schema.Candidate, prefix: str) -> list[str]:
     ]
     if candidate.fun_score is not None and candidate.fun_score >= 50:
         detail_parts.append(f"fun:{candidate.fun_score:.0f}")
+    # First-party interaction tag: this is the subject's own post directed at
+    # another account (a reply/mention). Signals a relationship the synthesis
+    # should read even at low engagement, not noise.
+    interaction_targets = (candidate.metadata or {}).get("interaction_targets")
+    if interaction_targets:
+        detail_parts.append("interaction:→@" + ",@".join(interaction_targets[:2]))
     details = " | ".join(part for part in detail_parts if part)
     lines = [
         f"{prefix} [{schema.candidate_source_label(candidate)}] {candidate.title}",
@@ -1277,6 +1287,9 @@ def _shorten_polymarket_title(title: str) -> str:
         words = t.split()
         t = " ".join(words[:6])
 
+    # Drop a leading article so the descriptor doesn't read "an Anthropic Claude..."
+    t = re.sub(r"^(?:a|an|the)\s+", "", t, flags=re.I)
+
     return t
 
 
@@ -1308,12 +1321,21 @@ def _polymarket_top_markets(items: list[schema.SourceItem], limit: int = 3) -> l
         if not descriptor:
             continue
 
-        # For binary Yes/No markets (lead_name == "Yes"), the "Yes" is implicit - omit it.
-        # For named outcomes (e.g. "Kanye" in a multi-way market), keep the outcome name.
-        if lead_name.lower() == "yes":
+        # Append the outcome name only when it adds information. It's redundant when
+        # empty, a binary Yes/No proxy, a bare article ("an"/"the"), or already the
+        # leading token of the descriptor — appending it then yields noise like
+        # "...score at: an 19%" or a doubled token.
+        label = (lead_name or "").strip()
+        descriptor_lead = descriptor.split()[0].lower() if descriptor.split() else ""
+        redundant = (
+            not label
+            or label.lower() in ("yes", "no", "a", "an", "the")
+            or label.lower() == descriptor_lead
+        )
+        if redundant:
             summaries.append(f"{descriptor} {pct}")
         else:
-            summaries.append(f"{descriptor}: {lead_name} {pct}")
+            summaries.append(f"{descriptor}: {label} {pct}")
 
     return summaries
 
@@ -1463,7 +1485,7 @@ _FOOTER_SOURCES: list[tuple[str, str, str, str, list[tuple[str, str]]]] = [
     ("hackernews",  "🟡", "HN",           "story",    [("points", "points"), ("comments", "comments")]),
     ("bluesky",     "🦋", "Bluesky",      "post",     [("likes", "likes"), ("reposts", "reposts")]),
     ("truthsocial", "🇺🇸", "Truth Social", "post",     [("likes", "likes"), ("reposts", "reposts")]),
-    ("github",      "🐙", "GitHub",       "item",     [("reactions", "reactions"), ("comments", "comments")]),
+    ("github",      "🐙", "GitHub",       "item",     [("stars", "stars"), ("merged_prs", "merged"), ("reactions", "reactions"), ("comments", "comments")]),
     ("digg",        "⛏️", "Digg",         "cluster",  [("postCount", "posts"), ("uniqueAuthors", "authors")]),
     # Jobs must appear so a scoped --hiring-signals run (jobs-only) still emits
     # the LAW 5 footer; without it the footer was dropped entirely.
@@ -1730,7 +1752,7 @@ ENGAGEMENT_DISPLAY: dict[str, list[tuple[str, str]]] = {
     "bluesky":      [("likes", "likes"), ("reposts", "rt"), ("replies", "re")],
     "truthsocial":  [("likes", "likes"), ("reposts", "rt"), ("replies", "re")],
     "polymarket":   [],
-    "github":       [("reactions", "react"), ("comments", "cmt")],
+    "github":       [("stars", "stars"), ("merged_prs", "merged"), ("reactions", "react"), ("comments", "cmt")],
     "perplexity":   [("citations", "cite")],
     "digg":         [("postCount", "posts"), ("uniqueAuthors", "auth")],
 }
@@ -1898,6 +1920,10 @@ def _comment_attribution(source: str | None, author: str | None) -> str:
     if not author or author in ("[deleted]", "[removed]"):
         return "Comment"
     prefix = _HANDLE_PREFIX.get(source or "", "")
+    # Some sources (YouTube/TikTok) already store the author with a leading '@';
+    # strip it before re-prefixing so we don't emit '@@handle'.
+    if prefix and author.startswith(prefix):
+        author = author[len(prefix):]
     return f"{prefix}{author}" if prefix else author
 
 
@@ -2041,6 +2067,51 @@ def _render_best_takes(candidates, limit=5, threshold=70.0, vote_weight=_FUN_LEV
         score_tag = f"(fun:{candidate.fun_score:.0f}{crowd_tag})"
         reason = f" -- {candidate.fun_explanation}" if candidate.fun_explanation and candidate.fun_explanation != "heuristic-fallback" else ""
         lines.append(f'- "{_truncate(text, 280)}" -- {attribution} {score_tag}{reason}')
+    return lines
+
+
+def _render_top_comments(report, limit: int = 8) -> list[str]:
+    """Vote-ranked community comments across ALL ranked candidates — not just the
+    top-cluster representatives — surfaced into the EVIDENCE block so the reading
+    model can weave the funniest/highest-engagement lines into the synthesis.
+
+    This exists because `_render_best_takes` only populates when the engine has an
+    LLM fun-scorer (a paid provider the subprocess usually lacks), so in normal
+    use the funniest comments never reach the model. This block always surfaces
+    the crowd-voted comments and leaves the funny/quotable SELECTION to the model
+    (a capable fun judge). Ranking is per-platform-normalized so one platform
+    can't crowd out the rest; each line carries the verbatim comment/post URL so
+    the model can cite without reconstructing a link.
+    """
+    seen: set[str] = set()
+    scored: list[tuple[float, schema.Candidate, schema.SourceItem, dict, str]] = []
+    for cand in report.ranked_candidates:
+        for item in cand.source_items:
+            # _top_comments_list applies the per-source min-score threshold and
+            # the 3-per-item cap, so trivial comments don't surface here either.
+            for tc in _top_comments_list(item):
+                if not isinstance(tc, dict):
+                    continue
+                body = (tc.get("excerpt") or tc.get("text") or tc.get("body") or "").strip()
+                if len(body) < 12:
+                    continue
+                key = body[:60].lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                strength = signals.normalized_comment_vote(cand.source, tc.get("score"))
+                scored.append((strength, cand, item, tc, body))
+    if len(scored) < 2:
+        return []
+    scored.sort(key=lambda row: -row[0])
+    lines = ["## Top Community Comments", ""]
+    for _strength, cand, _item, tc, body in scored[:limit]:
+        score = tc.get("score", "")
+        vote_label = _vote_label_for(cand.source)
+        attribution = _comment_attribution(cand.source, tc.get("author"))
+        url = tc.get("url") or cand.url or ""
+        url_part = f" — {url}" if url else ""
+        lines.append(f'- "{_truncate(body, 240)}" — {attribution} ({score} {vote_label}){url_part}')
     return lines
 
 

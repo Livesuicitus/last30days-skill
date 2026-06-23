@@ -97,8 +97,12 @@ def search_hackernews(
     core_flat = _flatten_query_for_algolia(core)
     _log(f"Searching for '{core_flat}' (raw: '{topic}', since {from_date}, count={count})")
 
-    # Use relevance-sorted search with date filters. Algolia's HN index rejects
-    # engagement fields in numericFilters, so points are filtered client-side.
+    # Use relevance-sorted search. The HN Algolia index only allows
+    # `created_at_i` in numericFilters; `points` is NOT in its
+    # `numericAttributesForFiltering`, so a `points>N` clause makes the API
+    # return HTTP 400 ("invalid numeric attribute(points)") and zero stories.
+    # Low-engagement stories are filtered client-side after overfetching so the
+    # invalid numeric filter is not reintroduced.
     # NOTE: restrictSearchableAttributes=title omitted intentionally — it would
     # miss Ask HN/Show HN threads where the topic appears in the body.
     params = {

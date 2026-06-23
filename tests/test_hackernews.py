@@ -291,6 +291,26 @@ def test_search_hackernews_engagement_filter(mock_request):
 
 
 @patch('lib.hackernews.http.request')
+def test_search_hackernews_no_points_numericfilter(mock_request):
+    """numericFilters must NOT include a `points` clause.
+
+    `points` is not in the HN Algolia index's `numericAttributesForFiltering`,
+    so a `points>2` clause returns HTTP 400 ("invalid numeric attribute(points)")
+    and zero stories. Engagement is filtered client-side after overfetching
+    instead. This guards against the invalid filter being reintroduced.
+    """
+    mock_request.return_value = {"hits": [], "nbHits": 0}
+
+    hackernews.search_hackernews("test", "2026-01-01", "2026-01-31")
+
+    url = mock_request.call_args[0][1]
+
+    # Date filter stays; the invalid points filter must be gone.
+    assert "created_at_i" in url
+    assert "points" not in url
+
+
+@patch('lib.hackernews.http.request')
 def test_search_hackernews_truncates_after_overfetch(mock_request):
     """Test that overfetching does not return more than the requested depth."""
     mock_request.return_value = {
