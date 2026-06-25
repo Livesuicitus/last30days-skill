@@ -222,17 +222,29 @@ End of OUTPUT CONTRACT. The laws above are the contract; everything below is imp
 
 # HOW TO INVOKE THIS SKILL (READ FIRST, FOLLOW EVERY TIME)
 
-**STEP 0 - LOAD WEBSEARCH FIRST.** Your literal first tool call on every `/last30days` invocation MUST be:
+**STEP 0 - RESOLVE HOST-NATIVE SEARCH FIRST.** Your first action on every `/last30days` invocation is to determine whether this host has a native web-search tool and load it when the host requires a schema-selection step.
 
-```
-ToolSearch select:WebSearch
-```
+Use this capability matrix:
 
-WebSearch is a **deferred tool** in Claude Code v2.1.114. The frontmatter of this file authorizes it (`allowed-tools: ... WebSearch`) but the runtime lists it as "schemas are NOT loaded." Calling WebSearch without `ToolSearch select:WebSearch` first will fail or do nothing. That friction is the documented cause of the second-most-common failure mode of this skill: the model sees "WebSearch is there but deferred," takes the low-friction path, skips Step 0.5 and 0.55, and runs the engine bare with only keyword search. The output looks fine but misses founder X timelines, GitHub repo activity, and subreddit-specific threads.
+- **Claude Code with deferred WebSearch:** your literal first tool call MUST be:
 
-Load WebSearch first. No exceptions. Then run the first-run gate below before anything else.
+  ```text
+  ToolSearch select:WebSearch
+  ```
 
-**FIRST-RUN GATE — run this Bash command immediately after loading WebSearch, before reading the topic or doing any research:**
+  WebSearch is a deferred tool in Claude Code v2.1.114. The frontmatter authorizes it (`allowed-tools: ... WebSearch`) but the runtime can list schemas as "not loaded." Calling WebSearch without selecting it first may fail or do nothing.
+
+- **Codex / Gemini / hosts with a native web-search tool already exposed:** use that native web-search tool for Step 0.5 / 0.55 pre-research and Step 2 supplements. Do **not** treat a failed or empty `ToolSearch select:WebSearch` lookup as fatal when a native search tool is already available in the host. On Codex, for example, `tool_search` may not return a `WebSearch` schema even though the session has native web search.
+
+- **Hosts with no native web-search tool:** skip Step 0.55 and Step 0.75, and add `--auto-resolve` to the engine command. The engine will use configured web backends (`BRAVE_API_KEY`, `EXA_API_KEY`, `SERPER_API_KEY`, `PARALLEL_API_KEY`) or the keyless floor when available.
+
+When native search is available, export `LAST30DAYS_NATIVE_SEARCH=1` in the same shell as the engine invocation so the engine does not also run the lower-quality keyless web floor. Leave it unset on hosts without native search.
+
+Resolving this correctly prevents the second-most-common failure mode of this skill: the model skips Step 0.5 / 0.55 and runs the engine bare with only keyword search. The output looks fine but misses founder X timelines, GitHub repo activity, subreddit-specific threads, and current first-party positioning.
+
+After resolving host-native search, run the first-run gate below before anything else.
+
+**FIRST-RUN GATE — run this Bash command immediately after resolving host-native search, before reading the topic or doing any research:**
 
 ```bash
 grep -q "SETUP_COMPLETE=true" ~/.config/last30days/.env 2>/dev/null && echo "1" || echo "FIRST_RUN_DETECTED"

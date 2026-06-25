@@ -39,3 +39,31 @@ def test_non_modal_completion_mentions_safe_diagnose_and_project_trust():
     assert "safe `--diagnose`" in prose
     assert "LAST30DAYS_TRUST_PROJECT_CONFIG=1" in prose
     assert "Codex desktop" in prose
+
+
+def _step0_search_contract() -> str:
+    text = SKILL_MD.read_text(encoding="utf-8")
+    start_marker = "**STEP 0 - RESOLVE HOST-NATIVE SEARCH FIRST.**"
+    end_marker = "**FIRST-RUN GATE"
+    start = text.find(start_marker)
+    assert start != -1, f"missing section marker: {start_marker}"
+    end = text.find(end_marker, start)
+    assert end != -1, f"missing section marker: {end_marker}"
+    return text[start:end]
+
+
+def test_codex_native_search_does_not_require_deferred_websearch_schema():
+    step0 = _step0_search_contract()
+    assert "Claude Code with deferred WebSearch" in step0
+    assert "ToolSearch select:WebSearch" in step0
+    assert "Codex / Gemini / hosts with a native web-search tool already exposed" in step0
+    assert "Do **not** treat a failed or empty `ToolSearch select:WebSearch` lookup as fatal" in step0
+    assert "Codex" in step0 and "native web search" in step0
+
+
+def test_no_native_search_hosts_use_auto_resolve_and_leave_native_signal_unset():
+    step0 = _step0_search_contract()
+    assert "Hosts with no native web-search tool" in step0
+    assert "--auto-resolve" in step0
+    assert "LAST30DAYS_NATIVE_SEARCH=1" in step0
+    assert "Leave it unset on hosts without native search" in step0

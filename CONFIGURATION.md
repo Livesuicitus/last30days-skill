@@ -251,7 +251,7 @@ When you invoke `/last30days` from Claude Code, Codex, or Gemini, the host model
 
 The search-source preference ladder, strict best-to-floor:
 
-1. **Host-native search** - Claude Code's `WebSearch`, and the equivalents on Codex / Gemini. Best results; used automatically on hosts that have it. Signalled to the engine via `LAST30DAYS_NATIVE_SEARCH=1` (the skill sets this for you when your host has a native search tool) so the engine does not run a worse search underneath it.
+1. **Host-native search** - Claude Code's deferred `WebSearch` after `ToolSearch select:WebSearch`, or the native equivalents already exposed on Codex / Gemini. Best results; used automatically on hosts that have it. A failed schema lookup is not fatal on hosts such as Codex when another native search tool is already available. Signalled to the engine via `LAST30DAYS_NATIVE_SEARCH=1` (the skill sets this for you when your host has a native search tool) so the engine does not run a worse search underneath it.
 2. **Paid engine backend** - one of `BRAVE_API_KEY`, `EXA_API_KEY`, `SERPER_API_KEY`, `PARALLEL_API_KEY`, auto-detected in that order. Override per-run with `--web-backend=<name>`.
 3. **Keyless engine floor** - zero-key web search (DuckDuckGo, plus an optional SearXNG instance) and zero-key page fetch (Jina Reader). Runs only when the host has **no** native search **and** no paid key is set, so headless/cron and hosts without a built-in search tool still get general-web coverage. Force it explicitly with `--web-backend=keyless`.
 
