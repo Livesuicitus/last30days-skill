@@ -58,6 +58,7 @@ class TestPluginContract(unittest.TestCase):
         self.assertEqual("last30days-skill", marketplace["name"])
         self.assertIn("last30days", plugin_by_name)
         plugin = plugin_by_name["last30days"]
+        # Exact dict equality locks the bare Git URL source (anti-self-referential-local).
         self.assertEqual(
             {
                 "source": "url",
@@ -65,9 +66,6 @@ class TestPluginContract(unittest.TestCase):
             },
             plugin["source"],
         )
-        # Grok rejects self-referential local marketplace sources (path "." / "./").
-        self.assertNotEqual("local", plugin["source"].get("type"))
-        self.assertNotIn(plugin["source"].get("path"), {".", "./"})
 
     def test_versions_match_across_manifests(self) -> None:
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -96,6 +94,16 @@ class TestPluginContract(unittest.TestCase):
         self.assertNotIn("description", marketplace)
         self.assertIn("metadata", marketplace)
         self.assertIn("description", marketplace["metadata"])
+
+    def test_grok_marketplace_has_current_schema_shape(self) -> None:
+        marketplace = _json(ROOT / ".grok-plugin" / "marketplace.json")
+
+        self.assertNotIn("$schema", marketplace)
+        self.assertNotIn("metadata", marketplace)
+        self.assertIsInstance(marketplace["description"], str)
+        self.assertIn("name", marketplace)
+        self.assertIn("owner", marketplace)
+        self.assertIn("plugins", marketplace)
 
     def test_workflows_do_not_reference_removed_root_scripts_dir(self) -> None:
         # The root-level scripts/ directory was removed; workflows must not
