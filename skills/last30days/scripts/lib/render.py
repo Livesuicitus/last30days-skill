@@ -198,7 +198,15 @@ def _render_drill_context(report: schema.Report) -> list[str]:
 def _render_library_context(report: schema.Report) -> list[str]:
     if not report.library_context:
         return []
-    lines = [library_index.LIBRARY_CONTEXT_START, "## From your library", ""]
+    lines = [
+        library_index.LIBRARY_CONTEXT_START,
+        "## From your library",
+        "",
+        "_Prior saved runs on this topic from your local research library "
+        "(historical context, not fresh evidence; set "
+        "LAST30DAYS_LIBRARY_CONTEXT=off to hide)._",
+        "",
+    ]
     for item in report.library_context:
         detail = _truncate(item.summary or item.headline, 220)
         lines.append(
@@ -2038,9 +2046,12 @@ def _footer_line_for_source(emoji: str, label: str, count: int, item_word: str, 
 
 
 def _build_source_footer_lines(report: schema.Report) -> list[str]:
-    """Return emoji-tree lines for populated and outcome-bearing sources.
+    """Return emoji-tree lines for populated sources only (>=1 item).
 
-    The caller adds the tree characters (├─ / └─) after assembling all lines.
+    Sources that returned zero items - clean NO_RESULTS or a failure - are
+    omitted; their outcome still surfaces in the ## Source Coverage /
+    ## Partial Coverage evidence blocks. The caller adds the tree characters
+    (├─ / └─) after assembling all lines.
     """
     out: list[str] = []
     for source_key, emoji, label, item_word, engagement_fields in _FOOTER_SOURCES:
@@ -2103,18 +2114,12 @@ def _build_source_footer_lines(report: schema.Report) -> list[str]:
             line += f" │ ⚠ {_format_outcome(outcome)}"
         out.append(line)
 
-    populated = {source for source, items in report.items_by_source.items() if items}
-    footer_meta = {
-        source: (emoji, label)
-        for source, emoji, label, _item_word, _engagement in _FOOTER_SOURCES
-    }
-    footer_meta.update({"polymarket": ("📊", "Polymarket"), "grounding": ("🌐", "Web")})
-    for source, outcome in sorted(report.source_status.items()):
-        if source in populated:
-            continue
-        emoji, label = footer_meta.get(source, ("⚪", _source_label(source)))
-        out.append(f"{emoji} {label}: {_format_outcome(outcome)}")
-
+    # Only populated sources (>=1 item) get an emoji-tree line. A source that
+    # returned zero items - whether it completed cleanly (NO_RESULTS) or failed
+    # (rate-limited / unreachable / etc.) - is omitted from the user-facing
+    # footer. Its failure signal remains visible to synthesis in the
+    # ## Partial Coverage / ## Source Coverage evidence blocks, so nothing is
+    # silently lost; the conclusion surface just stays clean.
     return out
 
 
@@ -2156,12 +2161,12 @@ def _render_emoji_footer(report: schema.Report, save_path: str | None) -> list[s
     """Produce the deterministic magic footer block.
 
     Returns a list of markdown lines, including enclosing ``---`` separators.
-    Returns an empty list if the report has neither source items nor outcomes.
+    Returns an empty list only when there is nothing to report - no populated
+    sources, no top voices, and no save path. When every source returned zero
+    items but a save path exists, the banner and the 'Raw results saved to' line
+    still render so the durable raw-file citation is never silently dropped.
     """
     source_lines = _build_source_footer_lines(report)
-    if not source_lines:
-        return []
-
     voices_line = _top_voices_footer_line(report)
     raw_line = f"📎 Raw results saved to {save_path}" if save_path else None
 
@@ -2171,6 +2176,9 @@ def _render_emoji_footer(report: schema.Report, save_path: str | None) -> list[s
         body.append(voices_line)
     if raw_line:
         body.append(raw_line)
+
+    if not body:
+        return []
 
     # Apply tree characters: ├─ for all but the last body line, └─ for the last.
     tree_lines: list[str] = []
