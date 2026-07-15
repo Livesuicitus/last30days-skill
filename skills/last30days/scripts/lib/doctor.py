@@ -72,14 +72,9 @@ TIER_BY_STATUS: Dict[str, str] = {
     health.ERROR: TIER_ERROR,
 }
 
+# Tier -> glyph, still used by the cached-report shape validator to confirm a
+# record carries a known tier. The user-facing render uses AUDIT_GLYPHS below.
 GLYPHS = {TIER_OK: "✓", TIER_WARN: "!", TIER_OFF: "○", TIER_ERROR: "✗"}
-
-GROUP_HEADERS = (
-    (TIER_OK, "Ready"),
-    (TIER_WARN, "Degraded"),
-    (TIER_OFF, "Off"),
-    (TIER_ERROR, "Errors"),
-)
 
 # Four-state audit (R1). A presentation layer derived from the tier rollup +
 # last-run evidence + optional live probe - it augments the per-source records,
