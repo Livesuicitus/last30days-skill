@@ -878,6 +878,51 @@ class FourStateAudit(unittest.TestCase):
         self.assertIn("13 items last run", text)
 
 
+class JsonContract(unittest.TestCase):
+    """U9: doctor --json is additive; --cached serves the new audit shape."""
+
+    LEGACY_RECORD_KEYS = {
+        "tier", "status", "mode", "backends", "active_backend", "fix",
+        "requires", "note", "detail", "pin_var", "pin_flag", "pinned",
+    }
+
+    def test_legacy_record_keys_preserved(self):
+        blob = json.loads(doctor.render_json(_build({})))
+        rec = blob["sources"]["reddit"]
+        for key in self.LEGACY_RECORD_KEYS:
+            self.assertIn(key, rec, key)
+        self.assertIn("audit_state", rec)  # additive
+        self.assertIn("mode", blob)  # top-level additive
+
+    def test_new_keys_additive(self):
+        blob = json.loads(
+            doctor.render_json(
+                _build(
+                    {"SCRAPECREATORS_API_KEY": "dummy-sc-secret-000"},
+                    probe_map={"yt-dlp": health.OK},
+                )
+            )
+        )
+        yt = blob["sources"]["youtube"]
+        self.assertIn("cli", yt)
+        self.assertIn("backups", yt)
+        self.assertIn("comments", yt)
+
+    def test_cached_roundtrip_serves_audit_shape(self):
+        tmp = Path(tempfile.mkdtemp()) / "doctor-cache.json"
+        with _Hermetic(), mock.patch("lib.doctor.cache_path", return_value=tmp):
+            report = doctor.build_report({})
+            report["generated_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
+            report["from_cache"] = False
+            self.assertTrue(doctor._write_cache(report, {}))
+            served = doctor.read_cached_report({})
+        self.assertIsNotNone(served)
+        self.assertIn("audit_state", served["sources"]["reddit"])
+        self.assertIn("WORKING", doctor.render_text(served))
+
+
 class LiveProbe(unittest.TestCase):
     """U5: bounded live probe (--probe / no-fresh-run auto-fallback)."""
 
